@@ -2,10 +2,10 @@ import * as C from './crypto.js';
 import { meta, entries as entryDB, files as fileDB, wipe } from './db.js';
 import * as Drive from './drive.js';
 import * as Bio from './bio.js';
+import { strength, level, passphrase, MIN_BITS } from './strength.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const MIN_LEN = 10;
-const MIN_BITS = 45;
 const HIDDEN_GRACE = 30_000;
 const MOODS = [
   ['🥰', 'Con amor'], ['😄', 'Feliz'], ['🙂', 'Bien'], ['😌', 'En paz'], ['😐', 'Normal'],
@@ -131,25 +131,6 @@ function swipe(el, cb) {
   }, { passive: true });
 }
 
-function strength(p) {
-  if (!p) return 0;
-  let pool = 0;
-  if (/[a-zñ]/.test(p)) pool += 27;
-  if (/[A-ZÑ]/.test(p)) pool += 27;
-  if (/\d/.test(p)) pool += 10;
-  if (/[^a-zA-ZñÑ0-9]/.test(p)) pool += 33;
-  let bits = p.length * Math.log2(pool || 1);
-  if (/(.)\1{2,}/.test(p) || /^(123|abc|qwe|password|contrase)/i.test(p)) bits *= 0.6;
-  return bits;
-}
-
-function level(bits) {
-  if (bits < MIN_BITS) return { i: 1, label: 'Débil' };
-  if (bits < 60) return { i: 2, label: 'Aceptable' };
-  if (bits < 80) return { i: 3, label: 'Fuerte' };
-  return { i: 4, label: 'Muy fuerte' };
-}
-
 function pwField(placeholder, autocomplete) {
   const input = h('input', { type: 'password', class: 'input', placeholder, autocomplete, autocapitalize: 'off', spellcheck: 'false', required: true });
   const toggle = h('button', { type: 'button', class: 'pw-eye', 'aria-label': 'Mostrar contraseña', onclick: () => {
@@ -198,6 +179,50 @@ function img(name, preview) {
 function setBg(el, name) {
   el._load = () => fileUrl(name).then((u) => { if (u) el.style.backgroundImage = `url("${u}")`; }).catch(() => {});
   io.observe(el);
+}
+
+// Campos para elegir una contraseña maestra nueva: medidor de fortaleza,
+// generador de frases y confirmación. check() devuelve el error o null.
+function newPasswordFields(placeholder, repeatPlaceholder) {
+  const p1 = pwField(placeholder, 'new-password');
+  const p2 = pwField(repeatPlaceholder, 'new-password');
+  const bar = h('span');
+  const meter = h('div', { class: 'meter' }, bar);
+  const meterLabel = h('div', { class: 'meter-label' }, ' ');
+  const paint = () => {
+    const pw = p1.input.value;
+    const b = strength(pw);
+    meter.dataset.level = pw ? level(b).i : 0;
+    bar.style.width = Math.min(100, (b / 80) * 100) + '%';
+    meterLabel.textContent = pw ? level(b).label : ' ';
+  };
+  p1.input.addEventListener('input', paint);
+
+  const phrase = h('div', { class: 'phrase', hidden: true });
+  const genBtn = h('button', { type: 'button', class: 'btn small', onclick: () => {
+    const words = passphrase();
+    p1.input.value = words;
+    p1.input.type = 'text';
+    p2.input.value = '';
+    paint();
+    phrase.hidden = false;
+    phrase.replaceChildren(
+      h('strong', {}, words),
+      h('span', {}, 'Anótala en papel ahora y escríbela abajo para confirmar. Si no te gusta, genera otra.'));
+    genBtn.replaceChildren(icon('refresh'), 'Generar otra');
+  } }, icon('sparkle'), 'Generar una frase segura');
+
+  return {
+    nodes: [p1.wrap, h('div', { class: 'meter-row' }, meter, meterLabel), genBtn, phrase, p2.wrap],
+    value: () => p1.input.value,
+    check() {
+      const pw = p1.input.value;
+      if (pw.length < MIN_LEN) return `Usa al menos ${MIN_LEN} caracteres.`;
+      if (strength(pw) < MIN_BITS) return 'Es fácil de adivinar: usa palabras al azar en vez de nombres, fechas o frases conocidas, o toca "Generar una frase segura".';
+      if (pw !== p2.input.value) return 'Las contraseñas no coinciden.';
+      return null;
+    },
+  };
 }
 
 function screen(node) { $app.replaceChildren(node); }
@@ -350,30 +375,15 @@ function lockShell(...content) {
 }
 
 function renderSetup(note) {
-  const p1 = pwField('Contraseña maestra', 'new-password');
-  const p2 = pwField('Repite la contraseña', 'new-password');
-  const bar = h('span');
-  const meter = h('div', { class: 'meter' }, bar);
-  const meterLabel = h('div', { class: 'meter-label' }, ' ');
+  const fields = newPasswordFields('Contraseña maestra', 'Repite la contraseña');
   const ack = h('input', { type: 'checkbox' });
   const err = h('p', { class: 'form-error', role: 'alert' });
   const btn = h('button', { class: 'btn primary block', type: 'submit' }, 'Crear mi diario');
 
-  p1.input.addEventListener('input', () => {
-    const b = strength(p1.input.value);
-    const lv = level(b);
-    meter.dataset.level = p1.input.value ? lv.i : 0;
-    bar.style.width = Math.min(100, (b / 90) * 100) + '%';
-    meterLabel.textContent = p1.input.value ? lv.label : ' ';
-  });
-
   const form = h('form', { class: 'card stack', onsubmit: async (e) => {
     e.preventDefault();
-    err.textContent = '';
-    const pw = p1.input.value;
-    if (pw.length < MIN_LEN) return (err.textContent = `Usa al menos ${MIN_LEN} caracteres.`);
-    if (strength(pw) < MIN_BITS) return (err.textContent = 'Es fácil de adivinar. Prueba una frase de 4 o 5 palabras.');
-    if (pw !== p2.input.value) return (err.textContent = 'Las contraseñas no coinciden.');
+    const pw = fields.value();
+    if ((err.textContent = fields.check() || '')) return;
     if (!ack.checked) return (err.textContent = 'Confirma que entiendes que no se puede recuperar.');
     busy(btn, 'Creando…');
     try {
@@ -387,7 +397,7 @@ function renderSetup(note) {
   } },
   h('h2', {}, 'Crea tu diario'),
   h('p', { class: 'muted' }, 'Todo se cifra en este dispositivo con tu contraseña maestra antes de guardarse o subirse a Google Drive.'),
-  p1.wrap, h('div', { class: 'meter-row' }, meter, meterLabel), p2.wrap,
+  fields.nodes,
   h('label', { class: 'check' }, ack, h('span', {}, 'Entiendo que si olvido esta contraseña nadie podrá recuperar mi diario: ni yo, ni Google.')),
   err, btn);
 
@@ -1229,26 +1239,22 @@ function autolockRow() {
 
 function passwordRow() {
   const cur = pwField('Contraseña actual', 'current-password');
-  const n1 = pwField('Nueva contraseña', 'new-password');
-  const n2 = pwField('Repite la nueva', 'new-password');
+  const fields = newPasswordFields('Nueva contraseña', 'Repite la nueva');
   const err = h('p', { class: 'form-error', role: 'alert' });
   const btn = h('button', { class: 'btn primary', type: 'submit' }, 'Cambiar contraseña');
   const form = h('form', { class: 'stack', onsubmit: async (e) => {
     e.preventDefault();
-    err.textContent = '';
-    const np = n1.input.value;
-    if (np.length < MIN_LEN || strength(np) < MIN_BITS) return (err.textContent = `La nueva contraseña es débil (mínimo ${MIN_LEN} caracteres; mejor una frase).`);
-    if (np !== n2.input.value) return (err.textContent = 'Las contraseñas nuevas no coinciden.');
+    if ((err.textContent = fields.check() || '')) return;
     busy(btn, 'Cambiando…');
     try {
-      await changePassword(cur.input.value, np);
+      await changePassword(cur.input.value, fields.value());
       toast('Contraseña cambiada');
       go('settings');
     } catch (x) {
       busy(btn);
       err.textContent = x.message === 'BAD' ? 'La contraseña actual no es correcta.' : x.message;
     }
-  } }, cur.wrap, n1.wrap, n2.wrap, err, btn);
+  } }, cur.wrap, fields.nodes, err, btn);
   return h('details', { class: 'row-details' }, h('summary', {}, 'Cambiar contraseña maestra'), form);
 }
 

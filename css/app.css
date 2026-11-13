@@ -128,6 +128,10 @@ p { margin: 0; }
 .meter[data-level="2"] span { background: #d79a2b; }
 .meter[data-level="3"] span { background: #6f9a5a; }
 .meter[data-level="4"] span { background: #3f8a5c; }
+.phrase { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 12px; border: 1px dashed var(--line); }
+.phrase[hidden] { display: none; }
+.phrase strong { font-size: 18px; line-height: 1.4; word-spacing: .2em; user-select: all; -webkit-user-select: all; }
+.phrase span { font-size: 13px; color: var(--muted); }
 .meter-label { font-size: 13px; color: var(--muted); min-width: 72px; text-align: right; }
 
 .card { background: var(--paper); border-radius: var(--r); box-shadow: var(--shadow); padding: 20px; }

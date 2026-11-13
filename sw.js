@@ -1,6 +1,6 @@
 // Guarda la app (no los datos) para que funcione sin conexión.
 // Red primero, así siempre se usa la última versión cuando hay internet.
-const CACHE = 'diario-v1';
+const CACHE = 'diario-v2';
 const ASSETS = [
   './',
   'index.html',
@@ -10,6 +10,8 @@ const ASSETS = [
   'js/db.js',
   'js/drive.js',
   'js/bio.js',
+  'js/strength.js',
+  'js/words.js',
   'js/config.js',
   'js/vendor/argon2.umd.min.js',
   'manifest.webmanifest',

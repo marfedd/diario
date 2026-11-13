@@ -75,6 +75,8 @@ index.html              página y política de seguridad (CSP)
 css/app.css             diseño (claro y oscuro)
 js/app.js               pantallas, calendario, editor, sincronización
 js/crypto.js            cifrado (AES-256-GCM, Argon2id, HKDF)
+js/strength.js          medidor de fortaleza y generador de frases
+js/words.js             lista de palabras para las frases (dominio público)
 js/bio.js               Face ID / Touch ID / Windows Hello (WebAuthn PRF)
 js/drive.js             Google Drive (OAuth + API)
 js/db.js                almacenamiento local cifrado (IndexedDB)
