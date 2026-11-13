@@ -64,6 +64,8 @@ El ID de cliente no es secreto: identifica la app, pero sin tu cuenta de Google 
 - **Primer dispositivo:** crea el diario con tu contraseña maestra. En Ajustes activa Face ID / Touch ID y conecta Google Drive.
 - **Otros dispositivos:** en la pantalla inicial toca **"Ya tengo un diario en Google Drive"**, entra con tu Google y escribe tu contraseña maestra. Luego activa la biometría de ese dispositivo en Ajustes.
 
+Las fotos se descargan a medida que hacen falta: primero las que están en pantalla, después el resto de las miniaturas de fondo, y cada foto en tamaño completo recién cuando la abres. Lo descargado queda guardado (cifrado) en el dispositivo, así que la segunda vez carga al instante y sin conexión.
+
 El permiso de Google dura una hora. Al abrir la app se renueva sola, con un salto rápido a Google. Si en algún momento ves el ícono de la nube en rojo, tócalo para reconectar.
 
 ## Archivos

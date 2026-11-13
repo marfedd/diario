@@ -363,6 +363,12 @@ img.missing { visibility: hidden; }
 .lb-nav { top: 50%; transform: translateY(-50%); }
 .lb-nav.prev { left: 12px; }
 .lb-nav.next { right: 12px; }
+.lightbox.loading::after {
+  content: ""; position: absolute; top: calc(var(--top) + 24px); left: 24px;
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid rgb(255 255 255 / .75); border-right-color: transparent;
+  animation: spin .8s linear infinite;
+}
 .lb-count { position: absolute; bottom: calc(var(--bottom) + 18px); color: rgb(255 255 255 / .75); font-size: 14px; }
 
 /* ---------- ajustes ---------- */

@@ -167,7 +167,7 @@ function fileUrl(name) {
   if (!S.urls.has(name)) {
     S.urls.set(name, (async () => {
       try {
-        const data = await fileDB.data(name);
+        const data = await fileDB.data(name) || await fetchFile(name, true);
         if (!data) { S.urls.delete(name); return null; }
         const bytes = await C.open(S.dek, data, name);
         return URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
@@ -180,9 +180,17 @@ function fileUrl(name) {
   return S.urls.get(name);
 }
 
-function img(name) {
+// `preview` (la miniatura) se muestra mientras llega el archivo principal.
+function img(name, preview) {
   const el = h('img', { alt: '', decoding: 'async' });
-  el._load = () => fileUrl(name).then((u) => (u ? (el.src = u) : el.classList.add('missing'))).catch(() => el.classList.add('missing'));
+  el._load = () => {
+    let shown = false;
+    const miss = () => { if (!shown) el.classList.add('missing'); };
+    const put = (u) => { if (u) { shown = true; el.src = u; el.classList.remove('missing'); } return u; };
+    const main = () => fileUrl(name).then((u) => put(u) || miss()).catch(miss);
+    if (!preview) return main();
+    fileUrl(preview).then(put).catch(() => {}).then(main);
+  };
   io.observe(el);
   return el;
 }
@@ -193,6 +201,116 @@ function setBg(el, name) {
 }
 
 function screen(node) { $app.replaceChildren(node); }
+
+// ---------------------------------------------------------------- fotos bajo demanda
+// Las fotos no se bajan todas al sincronizar: cada una se descarga de Drive la
+// primera vez que hace falta y queda guardada (cifrada) en este dispositivo.
+// Lo que está en pantalla es urgente y pasa al frente; las miniaturas restantes
+// se van bajando de fondo con menos conexiones.
+
+const DL_MAX = 6;   // descargas simultáneas en total
+const DL_BG = 3;    // de ellas, las que puede ocupar la descarga de fondo
+const jobs = new Map();   // nombre → { promise, resolve, reject, urgent }
+const waiting = [];       // nombres en cola: urgentes al frente, de fondo al final
+let active = 0;
+let listing = null;
+
+function remoteList() {
+  if (S.remote || !Drive.token()) return S.remote;
+  listing ||= Drive.list().then((m) => (S.remote ||= m)).finally(() => { listing = null; });
+  return listing;
+}
+
+async function driveGet(id) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await Drive.download(id);
+    } catch (e) {
+      if (attempt >= 3 || ![403, 429, 500, 502, 503].includes(e.status)) throw e;
+      await sleep(800 * 2 ** attempt + Math.random() * 400);
+    }
+  }
+}
+
+async function downloadFile(name) {
+  if ((await fileDB.get(name))?.deleted) return null;
+  const r = (await remoteList())?.get(name);
+  if (!r) return null;
+  const data = await driveGet(r.id);
+  try {
+    if ((await fileDB.get(name))?.deleted) return null;
+    await fileDB.put({ name, dirty: false, remoteId: r.id }, data);
+  } catch (e) {
+    console.warn('No se pudo guardar en este dispositivo', name, e); // p. ej. sin espacio
+  }
+  return data;
+}
+
+function fetchFile(name, urgent) {
+  let job = jobs.get(name);
+  if (job) {
+    const k = waiting.indexOf(name);
+    if (urgent && !job.urgent) job.urgent = true;
+    if (urgent && k > 0) { waiting.splice(k, 1); waiting.unshift(name); }
+    pump();
+    return job.promise;
+  }
+  job = { urgent };
+  job.promise = new Promise((resolve, reject) => { job.resolve = resolve; job.reject = reject; });
+  jobs.set(name, job);
+  if (urgent) waiting.unshift(name); else waiting.push(name);
+  pump();
+  return job.promise;
+}
+
+function pump() {
+  while (waiting.length && active < (jobs.get(waiting[0]).urgent ? DL_MAX : DL_BG)) {
+    const name = waiting.shift();
+    const job = jobs.get(name);
+    active++;
+    downloadFile(name).then(job.resolve, (e) => {
+      if (!job.urgent) dropBackground(); // sin red o sin permiso: no insistir con el resto
+      job.reject(e);
+    }).finally(() => { active--; jobs.delete(name); pump(); });
+  }
+}
+
+function dropBackground() {
+  for (let k = waiting.length - 1; k >= 0; k--) {
+    const job = jobs.get(waiting[k]);
+    if (job.urgent) continue;
+    jobs.delete(waiting[k]);
+    waiting.splice(k, 1);
+    job.resolve(null);
+  }
+}
+
+// Baja de fondo las miniaturas que falten (las más recientes primero), para que
+// el calendario y la lista funcionen sin conexión. Los originales, solo al abrirlos.
+async function prefetchThumbs() {
+  if (!S.remote || !Drive.token()) return;
+  const have = new Set((await fileDB.all()).map((f) => f.name));
+  for (const e of live().sort((a, b) => b.date.localeCompare(a.date))) {
+    for (const p of e.photos || []) {
+      const name = 't_' + p;
+      if (!have.has(name) && S.remote.has(name)) fetchFile(name, false).catch(() => {});
+    }
+  }
+}
+
+async function parallel(items, n, fn) {
+  let i = 0, failed = false;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (i < items.length && !failed) {
+      try { await fn(items[i++]); } catch (e) { failed = true; throw e; }
+    }
+  }));
+}
+
+function typing() {
+  const a = document.activeElement;
+  return Boolean(a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+}
 
 // ---------------------------------------------------------------- arranque
 
@@ -473,7 +591,7 @@ function syncButton() {
   const [ic, label] = {
     off: ['cloudOff', 'Google Drive no conectado'],
     idle: ['cloud', 'Sincronizar'],
-    syncing: ['refresh', 'Sincronizando…'],
+    syncing: ['refresh', S.sync.msg || 'Sincronizando…'],
     ok: ['cloudCheck', 'Todo sincronizado'],
     error: ['cloudAlert', S.sync.msg || 'Error al sincronizar'],
     auth: ['cloudAlert', 'Toca para reconectar con Google'],
@@ -668,7 +786,7 @@ function openEntry(id) {
       h('h1', { class: 'reader-title' }, e.title || 'Sin título'),
       photos.length
         ? h('div', { class: cls('gallery', photos.length === 1 && 'single') }, photos.map((p, i) => h('button', { class: 'gallery-item', 'aria-label': 'Ver foto', onclick: () => lightbox(photos, i) },
-          img((photos.length === 1 ? 'p_' : 't_') + p))))
+          photos.length === 1 ? img('p_' + p, 't_' + p) : img('t_' + p))))
         : null,
       e.text ? h('div', { class: 'reader-text' }, e.text) : null),
   ]);
@@ -773,8 +891,14 @@ function lightbox(photos, start) {
   const im = h('img', { class: 'lb-img', alt: '' });
   const counter = h('span', { class: 'lb-count' });
   const show = () => {
+    const cur = i;
+    let full = false;
     im.removeAttribute('src');
-    fileUrl('p_' + photos[i]).then((u) => u || fileUrl('t_' + photos[i])).then((u) => { if (u) im.src = u; }).catch(() => {});
+    box.classList.add('loading');
+    // La miniatura aparece al instante; el original la reemplaza cuando llega.
+    fileUrl('t_' + photos[cur]).then((u) => { if (u && cur === i && !full) im.src = u; }).catch(() => {});
+    fileUrl('p_' + photos[cur]).then((u) => { if (u && cur === i) { full = true; im.src = u; } }).catch(() => {})
+      .then(() => { if (cur === i) box.classList.remove('loading'); });
     counter.textContent = photos.length > 1 ? `${i + 1} / ${photos.length}` : '';
   };
   const step = (d) => { i = (i + d + photos.length) % photos.length; show(); };
@@ -852,9 +976,10 @@ async function storePhoto(file) {
 async function deletePhotoFiles(id) {
   for (const name of ['p_' + id, 't_' + id]) {
     const rec = await fileDB.get(name);
-    const remoteId = rec?.remoteId || S.remote?.get(name)?.id;
-    if (remoteId) await fileDB.put({ name, deleted: true, dirty: true, remoteId }, null);
-    else if (rec) await fileDB.del(name);
+    // Solo si nunca se subió basta con borrarla aquí. En cualquier otro caso (puede
+    // que ni esté descargada en este dispositivo) queda una marca para borrarla de Drive.
+    if (rec && rec.dirty && !rec.deleted && !rec.remoteId && !S.remote?.has(name)) await fileDB.del(name);
+    else await fileDB.put({ name, deleted: true, dirty: true, remoteId: rec?.remoteId || S.remote?.get(name)?.id || null }, null);
     const u = S.urls.get(name);
     if (u) {
       S.urls.delete(name);
@@ -905,6 +1030,7 @@ async function syncNow(interactive) {
     await runSync();
     localStorage.setItem('diario.lastSync', String(Date.now()));
     setSync('ok');
+    prefetchThumbs().catch((e) => console.warn(e));
   } catch (e) {
     console.error(e);
     if (e instanceof Drive.AuthError) setSync('auth');
@@ -954,33 +1080,42 @@ async function runSync() {
   const remote = await Drive.list();
   S.remote = remote;
   await syncHeader(remote);
-  let changed = false;
 
   // 1. Entradas que cambiaron en Drive → local (gana la edición más reciente).
-  for (const [name, r] of remote) {
-    if (!name.startsWith('e_')) continue;
-    const local = await entryDB.get(name);
-    if (local && local.md5 === r.md5Checksum) continue;
-    const data = await Drive.download(r.id);
+  //    Se bajan varias a la vez y la pantalla se va actualizando mientras llegan.
+  const known = new Map((await entryDB.all()).map((r) => [r.name, r.md5]));
+  const todo = [...remote].filter(([name, r]) => name.startsWith('e_') && known.get(name) !== r.md5Checksum);
+  let got = 0, stale = false, lastPaint = Date.now();
+  await parallel(todo, DL_MAX, async ([name, r]) => {
+    const data = await driveGet(r.id);
+    got++;
     let incoming;
     try {
       incoming = await C.openJSON(S.dek, data, name);
       if ('e_' + incoming.id !== name) throw new Error('id');
     } catch {
       console.warn('Ignorando archivo ilegible en Drive', name);
-      continue;
+      return;
     }
+    const local = await entryDB.get(name);
     if (local?.dirty) {
       const mine = S.entries.get(incoming.id);
       if (mine && mine.updatedAt >= incoming.updatedAt) {
         await entryDB.put({ ...local, remoteId: r.id, md5: r.md5Checksum });
-        continue;
+        return;
       }
     }
     await entryDB.put({ name, data, dirty: false, rev: (local?.rev || 0) + 1, remoteId: r.id, md5: r.md5Checksum });
     S.entries.set(incoming.id, incoming);
-    changed = true;
-  }
+    stale = true;
+    if (Date.now() - lastPaint > 1500 && !S.locking) {
+      lastPaint = Date.now();
+      setSync('syncing', `Descargando recuerdos… ${got} de ${todo.length}`);
+      if (S.view !== 'settings' && !typing()) { renderApp(); stale = false; }
+    }
+  });
+  if (stale && !S.locking) renderApp();
+  if (S.sync.msg) setSync('syncing');
 
   // 2. Fotos que se necesitan (las de entradas vivas y las del editor abierto).
   const needed = new Set();
@@ -991,7 +1126,6 @@ async function runSync() {
   // 3. Subir fotos nuevas y borrar las eliminadas. Las fotos van antes que las
   //    entradas para que otro dispositivo nunca vea una entrada sin sus fotos.
   const fileMetas = await fileDB.all();
-  const localNames = new Set();
   for (const f of fileMetas) {
     if (f.deleted) {
       const r = remote.get(f.name);
@@ -999,7 +1133,6 @@ async function runSync() {
       await fileDB.del(f.name);
       continue;
     }
-    localNames.add(f.name);
     const r = remote.get(f.name);
     if (r) {
       if (f.dirty || f.remoteId !== r.id) await fileDB.putMeta({ ...f, dirty: false, remoteId: r.id });
@@ -1022,20 +1155,13 @@ async function runSync() {
     await entryDB.put({ ...after, remoteId: res.id, md5: res.md5Checksum, dirty: after.rev !== rec.rev });
   }
 
-  // 5. Descargar fotos que faltan en este dispositivo (miniaturas primero).
-  const missing = [...needed].filter((n) => !localNames.has(n) && remote.has(n)).sort((a, b) => b[0].localeCompare(a[0]));
-  for (const name of missing) {
-    const r = remote.get(name);
-    await fileDB.put({ name, dirty: false, remoteId: r.id }, await Drive.download(r.id));
-    changed = true;
-  }
+  // 5. Las fotos que faltan en este dispositivo no se bajan aquí: se descargan
+  //    cuando se van a mostrar (fileUrl) y las miniaturas, de fondo (prefetchThumbs).
 
   // 6. Limpiar fotos locales que ya no usa ninguna entrada.
   for (const f of fileMetas) {
     if (!f.deleted && !f.dirty && !needed.has(f.name) && !pinned.has(f.name)) await fileDB.del(f.name);
   }
-
-  if (changed && !S.locking) renderApp();
 }
 
 // ---------------------------------------------------------------- ajustes
@@ -1139,7 +1265,7 @@ function driveStatus() {
     return box;
   }
   const last = Number(localStorage.getItem('diario.lastSync'));
-  const label = { idle: 'Conectado', syncing: 'Sincronizando…', ok: 'Todo sincronizado', error: 'Error: ' + S.sync.msg, auth: 'Hay que reconectar con Google' }[S.sync.state];
+  const label = { idle: 'Conectado', syncing: S.sync.msg || 'Sincronizando…', ok: 'Todo sincronizado', error: 'Error: ' + S.sync.msg, auth: 'Hay que reconectar con Google' }[S.sync.state];
   box.append(
     h('div', {}, h('strong', {}, label), last ? h('p', { class: 'muted' }, 'Última sincronización: ' + new Date(last).toLocaleString('es')) : null),
     h('div', { class: 'btn-row' },
@@ -1160,7 +1286,7 @@ async function pendingCount() {
 function deviceRow() {
   const info = h('p', { class: 'muted' }, '…');
   (async () => {
-    const photos = (await fileDB.all()).filter((f) => !f.deleted && f.name.startsWith('p_')).length;
+    const photos = live().reduce((n, e) => n + (e.photos?.length || 0), 0);
     let s = `${live().length} recuerdos · ${photos} fotos`;
     const est = await navigator.storage?.estimate?.();
     if (est?.usage) s += ` · ${(est.usage / 1048576).toFixed(1)} MB`;
