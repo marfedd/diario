@@ -212,8 +212,15 @@ function newPasswordFields(placeholder, repeatPlaceholder) {
     genBtn.replaceChildren(icon('refresh'), 'Generar otra');
   } }, icon('sparkle'), 'Generar una frase segura');
 
+  const why = h('details', { class: 'why' },
+    h('summary', {}, '¿Por qué una contraseña tan larga?'),
+    h('p', {}, 'Tu diario está pensado para durar décadas, y su contraseña tiene que resistir todo ese tiempo, no solo hoy.'),
+    h('p', {}, 'Si alguien llegara a copiar tu diario cifrado, podría guardarlo y probar contraseñas durante años, con computadoras cada vez más rápidas y baratas. Lo único que lo frena es la cantidad de combinaciones que tiene que probar.'),
+    h('p', {}, 'Las computadoras cuánticas agregan otro motivo. No rompen el cifrado del diario, pero en teoría podrían adivinar contraseñas mucho más rápido: una contraseña les costaría como si tuviera la mitad de su fortaleza. Una contraseña apenas suficiente hoy quedaría corta; una larga sigue siendo segura.'),
+    h('p', {}, 'Por eso conviene una frase de 6 palabras al azar: es fácil de anotar y recordar, y tiene margen de sobra para los próximos años.'));
+
   return {
-    nodes: [p1.wrap, h('div', { class: 'meter-row' }, meter, meterLabel), genBtn, phrase, p2.wrap],
+    nodes: [p1.wrap, h('div', { class: 'meter-row' }, meter, meterLabel), genBtn, phrase, why, p2.wrap],
     value: () => p1.input.value,
     check() {
       const pw = p1.input.value;

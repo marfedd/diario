@@ -132,6 +132,9 @@ p { margin: 0; }
 .phrase[hidden] { display: none; }
 .phrase strong { font-size: 18px; line-height: 1.4; word-spacing: .2em; user-select: all; -webkit-user-select: all; }
 .phrase span { font-size: 13px; color: var(--muted); }
+.why { font-size: 14px; color: var(--ink2); }
+.why summary { cursor: pointer; font-weight: 500; padding: 2px 0; color: var(--muted); }
+.why p { margin: 8px 0 0; line-height: 1.5; }
 .meter-label { font-size: 13px; color: var(--muted); min-width: 72px; text-align: right; }
 
 .card { background: var(--paper); border-radius: var(--r); box-shadow: var(--shadow); padding: 20px; }
@@ -382,8 +385,8 @@ img.missing { visibility: hidden; }
 .row-main { flex: 1; min-width: 180px; display: flex; flex-direction: column; }
 .row-main .muted { font-size: 14px; }
 .hint { flex-basis: 100%; font-size: 13px; color: var(--muted); }
-.row-details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
-.row-details[open] summary { margin-bottom: 12px; }
+.row-details > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.row-details[open] > summary { margin-bottom: 12px; }
 .about { text-align: center; color: var(--muted); font-size: 13px; }
 
 /* ---------- avisos ---------- */
